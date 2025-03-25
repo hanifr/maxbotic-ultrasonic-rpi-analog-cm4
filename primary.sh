@@ -20,38 +20,37 @@ echo
 sudo tee /home/pi/startUltrasonic.sh > /dev/null << 'EOF'
 #!/bin/bash
 
-# Source MQTT broker configuration
-source /home/pi/maxbotic-ultrasonic-rpi-analog-cm4/mqtt_service.sh
+# Load MQTT configurations
+source /home/pi/mqtt_service.sh
 
-# Sensor data directory and output file
 SENSOR_DIR="/sys/bus/iio/devices/iio:device0"
 OUTPUT_FILE="/home/pi/ultrasonic.txt"
 
-# Continuous loop with 2-second intervals
+# Continuous measurement loop every 2 seconds
 while true
 do
-    # Read raw ultrasonic sensor data
-    if RAW_VALUE=$(cat "$SENSOR_DIR/in_voltage0_raw"); then
+    if RAW_VALUE=$(cat "$SENSOR_DIR/in_voltage1_raw"); then
+        ULTRASONIC_DISTANCE=$(echo "scale=3; ($RAW_VALUE * 10) / 1303" | bc)
 
-        # Convert raw ADC value to voltage
-        ULTRASONIC_DATA=$(echo "scale=3; ($RAW_VALUE * 5) / 1024" | bc)
+        # Save data locally
+        echo "$ULTRASONIC_DISTANCE" > "$OUTPUT_FILE"
 
-        # Save calculated voltage locally
-        echo "$ULTRASONIC_DATA" > "$OUTPUT_FILE"
-
-        # Publish voltage to MQTT broker
+        # Publish to MQTT broker
         mosquitto_pub -h "$MQTT_BROKER" \
                       -p "$MQTT_PORT" \
                       -t "$MQTT_TOPIC" \
                       -i "$MQTT_CLIENT_ID" \
-                      -m "$ULTRASONIC_DATA" \
+                      -m "$ULTRASONIC_DISTANCE"
+
+        # Terminal output for debugging
+        echo "Ultrasonic Data: $ULTRASONIC_DISTANCE m (published via MQTT)"
     else
         echo "Error reading ultrasonic sensor data" >&2
     fi
 
-    # Wait 2 seconds before next measurement
     sleep 2
 done
+
 
 EOF
 
