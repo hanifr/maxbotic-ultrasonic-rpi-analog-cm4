@@ -23,24 +23,28 @@ sudo tee /home/pi/startUltrasonic.sh > /dev/null << 'EOF'
 # Source MQTT broker configuration
 source /home/pi/mqtt_service.sh
 
-# Sensor data directory
+# Sensor data directory and output file
 SENSOR_DIR="/sys/bus/iio/devices/iio:device0"
 OUTPUT_FILE="/home/pi/ultrasonic.txt"
 
-# Infinite loop for continuous measurements every 2 seconds
+# Continuous loop with 2-second intervals
 while true
 do
-    # Read ultrasonic sensor data
-    if ULTRASONIC_VALUE=$(cat "$SENSOR_DIR/in_voltage0_raw"); then
-        # Save data locally
-        echo "$ULTRASONIC_VALUE" > "$OUTPUT_FILE"
+    # Read raw ultrasonic sensor data
+    if RAW_VALUE=$(cat "$SENSOR_DIR/in_voltage0_raw"); then
 
-        # Publish data to MQTT broker
+        # Convert raw ADC value to voltage
+        ULTRASONIC_VOLTAGE=$(echo "scale=3; ($RAW_VALUE * 5) / 1024" | bc)
+
+        # Save calculated voltage locally
+        echo "$ULTRASONIC_VOLTAGE" > "$OUTPUT_FILE"
+
+        # Publish voltage to MQTT broker
         mosquitto_pub -h "$MQTT_BROKER" \
                       -p "$MQTT_PORT" \
                       -t "$MQTT_TOPIC" \
                       -i "$MQTT_CLIENT_ID" \
-                      -m "$ULTRASONIC_VALUE"
+                      -m "$ULTRASONIC_VOLTAGE"
     else
         echo "Error reading ultrasonic sensor data" >&2
     fi
@@ -48,6 +52,7 @@ do
     # Wait 2 seconds before next measurement
     sleep 2
 done
+
 EOF
 
 # Set proper permissions
