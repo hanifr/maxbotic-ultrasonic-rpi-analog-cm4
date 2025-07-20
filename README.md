@@ -304,7 +304,7 @@ The modular design allows easy extension:
 ## 📄 Example Installation Output
 
 ```
-[INFO] Dragino GPS data acquisition protocol setup started
+[INFO] MAxbotic data acquisition protocol setup started
 [SUCCESS] Permissions set successfully
 [SUCCESS] Timezone configured successfully
 [SUCCESS] Dependencies installed successfully
@@ -344,7 +344,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 📞 Support
 
 - **Issues**: [GitHub Issues](https://github.com/hanifr/maxbotic-ultrasonic-rpi-analog-cm4/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/hanifr/maxbotic-ultrasonic-rpi-analog-cm4/discussions)
 
 ---
 

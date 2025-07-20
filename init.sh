@@ -41,7 +41,7 @@ trap 'error_exit $LINENO' ERR
 
 # Main initialization function
 main() {
-    log_info "Dragino GPS data acquisition protocol setup started"
+    log_info "Maxbotic data acquisition protocol setup started"
     echo
     
     # Check if running as root (some operations require sudo)
