@@ -8,7 +8,7 @@
 export MQTT_BROKER="${MQTT_BROKER:-zr.txio.live}"
 export MQTT_PORT="${MQTT_PORT:-1880}"
 export MQTT_TOPIC="${MQTT_TOPIC:-dtonggang/ultrasonic-01}"
-export MQTT_CLIENT_ID="${MQTT_CLIENT_ID:-ultrasonic01}"
+export MQTT_CLIENT_ID="${MQTT_CLIENT_ID:-cm4-1}"
 
 # Optional MQTT Authentication (uncomment and set if needed)
 # export MQTT_USERNAME="your_username"
