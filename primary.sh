@@ -153,7 +153,7 @@ while true; do
         
         # Create JSON payload with timestamp
         # TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
-        TIMESTAMP=$(date +"%Y-%m-%dT%H:%M:%S.%3N+08:00")
+        TIMESTAMP=$(date +"%Y-%m-%dT%H:%M:%S.%3N")
         JSON_PAYLOAD=$(cat << JSON_EOF
 {
     "distance": $ULTRASONIC_DISTANCE,
