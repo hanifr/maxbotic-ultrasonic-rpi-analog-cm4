@@ -152,7 +152,8 @@ while true; do
         ULTRASONIC_DISTANCE=$(echo "scale=3; ($RAW_VALUE * 10) / 1303" | bc)
         
         # Create JSON payload with timestamp
-        TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
+        # TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
+        TIMESTAMP=$(date +"%Y-%m-%dT%H:%M:%S.%3N+08:00")
         JSON_PAYLOAD=$(cat << JSON_EOF
 {
     "distance": $ULTRASONIC_DISTANCE,
