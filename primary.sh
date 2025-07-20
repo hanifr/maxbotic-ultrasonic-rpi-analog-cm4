@@ -171,7 +171,6 @@ JSON_EOF
         if mosquitto_pub -h "$MQTT_BROKER" \
                           -p "$MQTT_PORT" \
                           -t "$MQTT_TOPIC" \
-                          -i "$MQTT_CLIENT_ID" \
                           -q "$MQTT_QOS" \
                           -m "$JSON_PAYLOAD" 2>/dev/null; then
             echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m (published successfully)"

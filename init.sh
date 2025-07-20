@@ -61,6 +61,7 @@ main() {
     # Set executable permissions
     log_info "Setting executable permissions for scripts"
     chmod +x primary.sh mqtt_service.sh
+    cp mqtt_service.sh /home/pi/
     log_success "Permissions set successfully"
     
     # Set timezone
