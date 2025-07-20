@@ -343,9 +343,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/maxbotic-ultrasonic-rpi-analog-cm4/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/maxbotic-ultrasonic-rpi-analog-cm4/discussions)
-- **Documentation**: [Project Wiki](https://github.com/yourusername/maxbotic-ultrasonic-rpi-analog-cm4/wiki)
+- **Issues**: [GitHub Issues](https://github.com/hanifr/maxbotic-ultrasonic-rpi-analog-cm4/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/hanifr/maxbotic-ultrasonic-rpi-analog-cm4/discussions)
 
 ---
 
