@@ -57,7 +57,7 @@ Distance (meters) = (raw_value * 10) / 1303
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/yourusername/maxbotic-ultrasonic-rpi-analog-cm4.git
+   git clone https://github.com/hanifr/maxbotic-ultrasonic-rpi-analog-cm4.git
    cd maxbotic-ultrasonic-rpi-analog-cm4
    ```
 
