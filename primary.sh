@@ -96,11 +96,11 @@ load_mqtt_config() {
     fi
 }
 
-# Create startup script (minimal changes to original)
+# Create startup script with simple remote control
 create_startup_script() {
     log_info "Creating ultrasonic sensor startup script with simple remote control"
     
-    # Create the startup script with minimal remote control added
+    # Create the startup script with proper error handling
     sudo tee "$START_SCRIPT" > /dev/null << 'EOF'
 #!/bin/bash
 
@@ -206,7 +206,7 @@ while true; do
         # Calculate distance using bc for floating point arithmetic
         ULTRASONIC_DISTANCE=$(echo "scale=3; ($RAW_VALUE * 10) / 1303" | bc)
         
-        # Create JSON payload with timestamp
+        # Create JSON payload with timestamp (enhanced with manual_mode)
         TIMESTAMP=$(date +"%Y-%m-%dT%H:%M:%S.%3N")
         JSON_PAYLOAD=$(cat << JSON_EOF
 {
@@ -328,7 +328,7 @@ EOF
     log_success "Simple control client created at $CONTROL_CLIENT"
 }
 
-# Create systemd service (same as original)
+# Create systemd service
 create_systemd_service() {
     log_info "Creating systemd service: $SERVICE_NAME"
     
@@ -371,7 +371,7 @@ EOF
     log_success "Systemd service created"
 }
 
-# Setup and start service (same as original)
+# Setup and start service
 setup_service() {
     log_info "Setting up systemd service"
     
