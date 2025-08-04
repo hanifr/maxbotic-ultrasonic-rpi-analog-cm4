@@ -371,6 +371,43 @@ YELLOW=$(tput setaf 3)
 BLUE=$(tput setaf 4)
 RESET=$(tput sgr0)
 
+# Function to show usage
+show_usage() {
+    cat << USAGE_EOF
+${BLUE}Remote Relay Control Client${RESET}
+
+${YELLOW}Usage:${RESET}
+    \$0 <command> [options]
+
+${YELLOW}Commands:${RESET}
+    ${GREEN}on${RESET}          Turn relay ON (manual mode)
+    ${GREEN}off${RESET}         Turn relay OFF (manual mode)  
+    ${GREEN}auto${RESET}        Switch to automatic mode (distance-based control)
+    ${GREEN}status${RESET}      Request current status
+    ${GREEN}listen${RESET}      Listen for status updates (default: 10 seconds)
+    ${GREEN}monitor${RESET}     Monitor sensor data (default: 30 seconds)
+
+${YELLOW}Options:${RESET}
+    -t, --timeout <seconds>    Set timeout for listen/monitor commands
+
+${YELLOW}Examples:${RESET}
+    \$0 on                      # Turn relay on
+    \$0 off                     # Turn relay off
+    \$0 auto                    # Switch to automatic mode
+    \$0 status                  # Request status
+    \$0 listen                  # Listen for status for 10 seconds
+    \$0 listen -t 30            # Listen for status for 30 seconds
+    \$0 monitor                 # Monitor sensor data for 30 seconds
+    \$0 monitor -t 60           # Monitor sensor data for 60 seconds
+
+${YELLOW}MQTT Configuration:${RESET}
+    Broker: $MQTT_BROKER:$MQTT_PORT
+    Data Topic: $MQTT_TOPIC
+    Control Topic: $CONTROL_TOPIC
+    Status Topic: $STATUS_TOPIC
+USAGE_EOF
+}
+
 # Function to send control command
 send_command() {
     local command="$1"
@@ -461,43 +498,6 @@ monitor_sensor() {
             echo "${GREEN}[RAW]${RESET} $line"
         fi
     done
-}
-
-# Function to show usage
-show_usage() {
-    cat << EOF
-${BLUE}Remote Relay Control Client${RESET}
-
-${YELLOW}Usage:${RESET}
-    $0 <command> [options]
-
-${YELLOW}Commands:${RESET}
-    ${GREEN}on${RESET}          Turn relay ON (manual mode)
-    ${GREEN}off${RESET}         Turn relay OFF (manual mode)  
-    ${GREEN}auto${RESET}        Switch to automatic mode (distance-based control)
-    ${GREEN}status${RESET}      Request current status
-    ${GREEN}listen${RESET}      Listen for status updates (default: 10 seconds)
-    ${GREEN}monitor${RESET}     Monitor sensor data (default: 30 seconds)
-
-${YELLOW}Options:${RESET}
-    -t, --timeout <seconds>    Set timeout for listen/monitor commands
-
-${YELLOW}Examples:${RESET}
-    $0 on                      # Turn relay on
-    $0 off                     # Turn relay off
-    $0 auto                    # Switch to automatic mode
-    $0 status                  # Request status
-    $0 listen                  # Listen for status for 10 seconds
-    $0 listen -t 30            # Listen for status for 30 seconds
-    $0 monitor                 # Monitor sensor data for 30 seconds
-    $0 monitor -t 60           # Monitor sensor data for 60 seconds
-
-${YELLOW}MQTT Configuration:${RESET}
-    Broker: $MQTT_BROKER:$MQTT_PORT
-    Data Topic: $MQTT_TOPIC
-    Control Topic: $CONTROL_TOPIC
-    Status Topic: $STATUS_TOPIC
-EOF
 }
 
 # Main function
