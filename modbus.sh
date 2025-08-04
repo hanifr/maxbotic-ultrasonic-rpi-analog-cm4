@@ -178,7 +178,6 @@ JSON_EOF
             # Turn off the relay if distance is above threshold
             # echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m (above threshold, not publishing)"
             mbpoll -m rtu -a 1 -b 9600 -P none -s 1 -t 0 -r 2 /dev/ttyAMA4 -- 0
-            continue
         fi
         
         # Publish to MQTT broker with error handling
