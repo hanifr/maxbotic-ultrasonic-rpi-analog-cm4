@@ -62,7 +62,7 @@ trap 'cleanup_on_error $LINENO' ERR
 
 # Dependency check
 check_dependencies() {
-    local dependencies=("bc" "mosquitto_pub" "mosquitto_sub" "systemctl" "mbpoll")
+    local dependencies=("bc" "mosquitto_pub" "mosquitto_sub" "systemctl")
     local missing_deps=()
     
     for dep in "${dependencies[@]}"; do
@@ -73,9 +73,7 @@ check_dependencies() {
     
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
         log_error "Missing dependencies: ${missing_deps[*]}"
-        log_info "Please install missing dependencies:"
-        log_info "  sudo apt update"
-        log_info "  sudo apt install bc mosquitto-clients libmodbus-dev"
+        log_info "Please install missing dependencies and retry"
         exit 1
     fi
     
@@ -98,15 +96,14 @@ load_mqtt_config() {
     fi
 }
 
-# Create enhanced startup script with remote control
+# Create enhanced startup script (based on original logic)
 create_startup_script() {
     log_info "Creating enhanced ultrasonic sensor startup script with remote control"
     
-    # Create the startup script with remote control functionality
+    # Create the startup script with remote control functionality added to original logic
     sudo tee "$START_SCRIPT" > /dev/null << 'EOF'
 #!/bin/bash
 
-# Enhanced startup script with remote relay control
 # Exit on error
 set -euo pipefail
 
@@ -125,32 +122,32 @@ if ! validate_mqtt_config; then
     exit 1
 fi
 
-# Additional configuration for remote control
+# Remote control configuration
 CONTROL_TOPIC="${MQTT_TOPIC}/control"
 STATUS_TOPIC="${MQTT_TOPIC}/status"
 FIFO_PATH="/tmp/relay_control_fifo"
 
 # Control state variables
-RELAY_STATE="auto"  # "auto", "manual_on", "manual_off"
-CURRENT_RELAY_STATUS="off"
+RELAY_MODE="auto"  # "auto", "manual_on", "manual_off"
 MANUAL_OVERRIDE=false
+CURRENT_RELAY_STATE="unknown"
 
 # Function to control relay
 control_relay() {
     local action="$1"
     local reason="$2"
     
-    if [[ "$action" == "on" && "$CURRENT_RELAY_STATUS" != "on" ]]; then
+    if [[ "$action" == "on" ]]; then
         if mbpoll -m rtu -a 1 -b 9600 -P none -s 1 -t 0 -r 2 /dev/ttyAMA4 -- 1 2>/dev/null; then
-            CURRENT_RELAY_STATUS="on"
+            CURRENT_RELAY_STATE="on"
             echo "$(date): Relay turned ON ($reason)"
             publish_status_update "on" "$reason"
         else
             echo "$(date): ERROR: Failed to turn relay ON" >&2
         fi
-    elif [[ "$action" == "off" && "$CURRENT_RELAY_STATUS" != "off" ]]; then
+    elif [[ "$action" == "off" ]]; then
         if mbpoll -m rtu -a 1 -b 9600 -P none -s 1 -t 0 -r 2 /dev/ttyAMA4 -- 0 2>/dev/null; then
-            CURRENT_RELAY_STATUS="off"
+            CURRENT_RELAY_STATE="off"
             echo "$(date): Relay turned OFF ($reason)"
             publish_status_update "off" "$reason"
         else
@@ -168,7 +165,7 @@ publish_status_update() {
     local status_payload=$(cat << JSON_EOF
 {
     "relay_status": "$relay_status",
-    "control_mode": "$RELAY_STATE",
+    "control_mode": "$RELAY_MODE",
     "reason": "$reason",
     "timestamp": "$timestamp",
     "sensor_id": "$MQTT_CLIENT_ID"
@@ -190,21 +187,21 @@ process_control_message() {
     
     # Simple JSON parsing for control commands
     if echo "$message" | grep -q '"relay".*:.*"on"'; then
-        RELAY_STATE="manual_on"
+        RELAY_MODE="manual_on"
         MANUAL_OVERRIDE=true
         control_relay "on" "remote_command"
     elif echo "$message" | grep -q '"relay".*:.*"off"'; then
-        RELAY_STATE="manual_off"
+        RELAY_MODE="manual_off"
         MANUAL_OVERRIDE=true
         control_relay "off" "remote_command"
     elif echo "$message" | grep -q '"mode".*:.*"auto"'; then
-        RELAY_STATE="auto"
+        RELAY_MODE="auto"
         MANUAL_OVERRIDE=false
         echo "$(date): Switched to automatic mode"
-        publish_status_update "$CURRENT_RELAY_STATUS" "switched_to_auto"
+        publish_status_update "$CURRENT_RELAY_STATE" "switched_to_auto"
     elif echo "$message" | grep -q '"status".*:.*"request"'; then
         # Status request
-        publish_status_update "$CURRENT_RELAY_STATUS" "status_request"
+        publish_status_update "$CURRENT_RELAY_STATE" "status_request"
     else
         echo "$(date): Unknown control command: $message"
     fi
@@ -221,7 +218,7 @@ start_mqtt_listener() {
                       -p "$MQTT_PORT" \
                       -t "$CONTROL_TOPIC" \
                       -q "$MQTT_QOS" 2>/dev/null | while read -r line; do
-            echo "$line" > "$FIFO_PATH"
+            echo "$line" > "$FIFO_PATH" 2>/dev/null || true
         done
     ) &
     
@@ -240,7 +237,9 @@ cleanup() {
     [[ -p "$FIFO_PATH" ]] && rm -f "$FIFO_PATH"
     
     # Turn off relay on shutdown
-    control_relay "off" "service_shutdown"
+    if [[ "$CURRENT_RELAY_STATE" == "on" ]]; then
+        control_relay "off" "service_shutdown"
+    fi
     
     exit 0
 }
@@ -265,29 +264,28 @@ echo "Control Topic: $CONTROL_TOPIC"
 echo "Status Topic: $STATUS_TOPIC"
 echo "Measurement interval: ${MEASUREMENT_INTERVAL}s"
 
-# Start MQTT listener
+# Start MQTT listener for remote control
 start_mqtt_listener
 
 # Send startup status
+CURRENT_RELAY_STATE="off"
 publish_status_update "off" "service_started"
 
-# Main monitoring loop
+# Main monitoring loop (preserving original logic)
 while true; do
     # Check for control messages (non-blocking)
-    if [[ -p "$FIFO_PATH" ]]; then
-        if read -t 0 <&0 2>/dev/null; then
-            if read -r control_msg < "$FIFO_PATH" 2>/dev/null; then
-                process_control_message "$control_msg"
-            fi
+    if [[ -p "$FIFO_PATH" ]] && read -t 0 < "$FIFO_PATH" 2>/dev/null; then
+        if read -r control_msg < "$FIFO_PATH" 2>/dev/null; then
+            process_control_message "$control_msg"
         fi
     fi
     
     # Read sensor data
     if RAW_VALUE=$(cat "$SENSOR_DIR/in_voltage1_raw" 2>/dev/null); then
-        # Calculate distance
+        # Calculate distance using bc for floating point arithmetic
         ULTRASONIC_DISTANCE=$(echo "scale=3; ($RAW_VALUE * 10) / 1303" | bc)
         
-        # Create sensor data payload
+        # Create JSON payload with timestamp (enhanced with relay info)
         TIMESTAMP=$(date +"%Y-%m-%dT%H:%M:%S.%3N")
         JSON_PAYLOAD=$(cat << JSON_EOF
 {
@@ -296,36 +294,46 @@ while true; do
     "timestamp": "$TIMESTAMP",
     "sensor_id": "$MQTT_CLIENT_ID",
     "raw_value": $RAW_VALUE,
-    "relay_status": "$CURRENT_RELAY_STATUS",
-    "control_mode": "$RELAY_STATE"
+    "relay_status": "$CURRENT_RELAY_STATE",
+    "control_mode": "$RELAY_MODE"
 }
 JSON_EOF
 )
         
-        # Save data locally
-        echo "$TIMESTAMP,$ULTRASONIC_DISTANCE,$CURRENT_RELAY_STATUS,$RELAY_STATE" >> "$OUTPUT_FILE"
+        # Save data locally with timestamp (enhanced with relay info)
+        echo "$TIMESTAMP,$ULTRASONIC_DISTANCE,$CURRENT_RELAY_STATE,$RELAY_MODE" >> "$OUTPUT_FILE"
+
+        # Original threshold logic - only act if in automatic mode
+        THRESHOLD=5.0
+        is_below_threshold=$(echo "$ULTRASONIC_DISTANCE < $THRESHOLD" | bc)
         
-        # Automatic relay control (only if not in manual override)
         if [[ "$MANUAL_OVERRIDE" == false ]]; then
-            THRESHOLD=5.0
-            is_below_threshold=$(echo "$ULTRASONIC_DISTANCE < $THRESHOLD" | bc)
-            
+            # Original automatic relay control logic
             if [[ $is_below_threshold -eq 1 ]]; then
+                # Turn on the relay if distance is below threshold
                 control_relay "on" "distance_${ULTRASONIC_DISTANCE}m_below_threshold"
             else
+                # Turn off the relay if distance is above threshold
                 control_relay "off" "distance_${ULTRASONIC_DISTANCE}m_above_threshold"
+                # Continue to skip MQTT publishing when above threshold (original behavior)
+                continue
             fi
         fi
         
-        # Publish sensor data (always publish, regardless of relay action)
-        if mosquitto_pub -h "$MQTT_BROKER" \
-                          -p "$MQTT_PORT" \
-                          -t "$MQTT_TOPIC" \
-                          -q "$MQTT_QOS" \
-                          -m "$JSON_PAYLOAD" 2>/dev/null; then
-            echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m, Relay: $CURRENT_RELAY_STATUS, Mode: $RELAY_STATE"
+        # Original MQTT publishing logic - only publish when below threshold or in manual mode
+        if [[ $is_below_threshold -eq 1 ]] || [[ "$MANUAL_OVERRIDE" == true ]]; then
+            if mosquitto_pub -h "$MQTT_BROKER" \
+                              -p "$MQTT_PORT" \
+                              -t "$MQTT_TOPIC" \
+                              -q "$MQTT_QOS" \
+                              -m "$JSON_PAYLOAD" 2>/dev/null; then
+                echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m, Relay: $CURRENT_RELAY_STATE, Mode: $RELAY_MODE (published successfully)"
+            else
+                echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m, Relay: $CURRENT_RELAY_STATE, Mode: $RELAY_MODE (MQTT publish failed)" >&2
+            fi
         else
-            echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m, Relay: $CURRENT_RELAY_STATUS (MQTT failed)" >&2
+            # When above threshold in auto mode, just log without publishing (original behavior)
+            echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m (above threshold, not publishing)"
         fi
         
     else
@@ -349,7 +357,7 @@ create_control_client() {
 #!/bin/bash
 
 # Remote Relay Control Client
-# Usage: ./relay_control_client.sh [on|off|auto|status]
+# Usage: ./relay_control_client.sh [on|off|auto|status|monitor]
 
 # Load MQTT configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -377,28 +385,23 @@ show_usage() {
 ${BLUE}Remote Relay Control Client${RESET}
 
 ${YELLOW}Usage:${RESET}
-    \$0 <command> [options]
+    \$0 <command>
 
 ${YELLOW}Commands:${RESET}
     ${GREEN}on${RESET}          Turn relay ON (manual mode)
     ${GREEN}off${RESET}         Turn relay OFF (manual mode)  
     ${GREEN}auto${RESET}        Switch to automatic mode (distance-based control)
     ${GREEN}status${RESET}      Request current status
-    ${GREEN}listen${RESET}      Listen for status updates (default: 10 seconds)
-    ${GREEN}monitor${RESET}     Monitor sensor data (default: 30 seconds)
-
-${YELLOW}Options:${RESET}
-    -t, --timeout <seconds>    Set timeout for listen/monitor commands
+    ${GREEN}monitor${RESET}     Monitor sensor data (10 seconds)
+    ${GREEN}listen${RESET}      Listen for status updates (10 seconds)
 
 ${YELLOW}Examples:${RESET}
     \$0 on                      # Turn relay on
     \$0 off                     # Turn relay off
     \$0 auto                    # Switch to automatic mode
     \$0 status                  # Request status
-    \$0 listen                  # Listen for status for 10 seconds
-    \$0 listen -t 30            # Listen for status for 30 seconds
-    \$0 monitor                 # Monitor sensor data for 30 seconds
-    \$0 monitor -t 60           # Monitor sensor data for 60 seconds
+    \$0 monitor                 # Monitor sensor data
+    \$0 listen                  # Listen for status updates
 
 ${YELLOW}MQTT Configuration:${RESET}
     Broker: $MQTT_BROKER:$MQTT_PORT
@@ -440,7 +443,6 @@ send_command() {
     
     echo "${BLUE}[INFO]${RESET} $description"
     echo "${BLUE}[INFO]${RESET} Publishing to: $CONTROL_TOPIC"
-    echo "${BLUE}[INFO]${RESET} Payload: $payload"
     
     if mosquitto_pub -h "$MQTT_BROKER" \
                       -p "$MQTT_PORT" \
@@ -454,50 +456,50 @@ send_command() {
     fi
 }
 
-# Function to listen for status updates
-listen_status() {
-    local timeout="${1:-10}"
-    
-    echo "${BLUE}[INFO]${RESET} Listening for status updates for ${timeout} seconds..."
-    echo "${BLUE}[INFO]${RESET} Status topic: $STATUS_TOPIC"
-    echo "${YELLOW}Press Ctrl+C to stop listening${RESET}"
-    echo
-    
-    timeout "$timeout" mosquitto_sub -h "$MQTT_BROKER" \
-                                    -p "$MQTT_PORT" \
-                                    -t "$STATUS_TOPIC" \
-                                    -q "$MQTT_QOS" \
-                                    -v 2>/dev/null | while read -r line; do
-        echo "${GREEN}[STATUS]${RESET} $line"
-    done
-}
-
 # Function to monitor sensor data
 monitor_sensor() {
-    local timeout="${1:-30}"
-    
-    echo "${BLUE}[INFO]${RESET} Monitoring sensor data for ${timeout} seconds..."
+    echo "${BLUE}[INFO]${RESET} Monitoring sensor data for 10 seconds..."
     echo "${BLUE}[INFO]${RESET} Data topic: $MQTT_TOPIC"
     echo "${YELLOW}Press Ctrl+C to stop monitoring${RESET}"
     echo
     
-    timeout "$timeout" mosquitto_sub -h "$MQTT_BROKER" \
-                                    -p "$MQTT_PORT" \
-                                    -t "$MQTT_TOPIC" \
-                                    -q "$MQTT_QOS" \
-                                    -v 2>/dev/null | while read -r line; do
+    timeout 10 mosquitto_sub -h "$MQTT_BROKER" \
+                             -p "$MQTT_PORT" \
+                             -t "$MQTT_TOPIC" \
+                             -q "$MQTT_QOS" \
+                             -v 2>/dev/null | while read -r line; do
         # Extract key information from JSON payload
         if echo "$line" | grep -q "distance"; then
             distance=$(echo "$line" | grep -o '"distance":[^,]*' | cut -d':' -f2 | tr -d ' ')
-            relay_status=$(echo "$line" | grep -o '"relay_status":"[^"]*"' | cut -d'"' -f4)
-            control_mode=$(echo "$line" | grep -o '"control_mode":"[^"]*"' | cut -d'"' -f4)
-            timestamp=$(echo "$line" | grep -o '"timestamp":"[^"]*"' | cut -d'"' -f4)
+            relay_status=$(echo "$line" | grep -o '"relay_status":"[^"]*"' | cut -d'"' -f4 2>/dev/null || echo "unknown")
+            control_mode=$(echo "$line" | grep -o '"control_mode":"[^"]*"' | cut -d'"' -f4 2>/dev/null || echo "unknown")
+            timestamp=$(echo "$line" | grep -o '"timestamp":"[^"]*"' | cut -d'"' -f4 2>/dev/null || echo "unknown")
             
             echo "${GREEN}[DATA]${RESET} ${timestamp} | Distance: ${distance}m | Relay: ${relay_status} | Mode: ${control_mode}"
         else
             echo "${GREEN}[RAW]${RESET} $line"
         fi
     done
+    
+    echo "${YELLOW}[INFO]${RESET} Monitoring completed"
+}
+
+# Function to listen for status updates
+listen_status() {
+    echo "${BLUE}[INFO]${RESET} Listening for status updates for 10 seconds..."
+    echo "${BLUE}[INFO]${RESET} Status topic: $STATUS_TOPIC"
+    echo "${YELLOW}Press Ctrl+C to stop listening${RESET}"
+    echo
+    
+    timeout 10 mosquitto_sub -h "$MQTT_BROKER" \
+                             -p "$MQTT_PORT" \
+                             -t "$STATUS_TOPIC" \
+                             -q "$MQTT_QOS" \
+                             -v 2>/dev/null | while read -r line; do
+        echo "${GREEN}[STATUS]${RESET} $line"
+    done
+    
+    echo "${YELLOW}[INFO]${RESET} Status listening completed"
 }
 
 # Main function
@@ -508,23 +510,6 @@ main() {
     fi
     
     local command="$1"
-    local timeout=""
-    
-    # Parse arguments
-    shift
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -t|--timeout)
-                timeout="$2"
-                shift 2
-                ;;
-            *)
-                echo "${RED}Error: Unknown option '$1'${RESET}"
-                show_usage
-                exit 1
-                ;;
-        esac
-    done
     
     # Validate MQTT configuration
     if ! validate_mqtt_config; then
@@ -537,11 +522,11 @@ main() {
         "on"|"off"|"auto"|"status")
             send_command "$command"
             ;;
-        "listen")
-            listen_status "${timeout:-10}"
-            ;;
         "monitor")
-            monitor_sensor "${timeout:-30}"
+            monitor_sensor
+            ;;
+        "listen")
+            listen_status
             ;;
         "help"|"-h"|"--help")
             show_usage
@@ -628,7 +613,7 @@ setup_service() {
     fi
     
     # Wait a moment and check service status
-    sleep 3
+    sleep 2
     if systemctl is-active --quiet "$SERVICE_NAME"; then
         log_success "Service is running successfully"
     else
@@ -654,10 +639,9 @@ show_usage_info() {
     echo "Request status:      ${_YELLOW}$CONTROL_CLIENT status${_RESET}"
     echo "Monitor data:        ${_YELLOW}$CONTROL_CLIENT monitor${_RESET}"
     echo "Listen to status:    ${_YELLOW}$CONTROL_CLIENT listen${_RESET}"
-    echo "Show help:           ${_YELLOW}$CONTROL_CLIENT help${_RESET}"
     echo
     echo "${_CYAN}=== MQTT Topics ===${_RESET}"
-    echo "Data topic:          ${_YELLOW}$MQTT_TOPIC${_RESET}"
+    echo "Data topic:          ${_YELLOW}$MQTT_TOPIC${_RESET} ${_BLUE}(only when distance < 5.0m or manual mode)${_RESET}"
     echo "Control topic:       ${_YELLOW}$MQTT_TOPIC/control${_RESET}"
     echo "Status topic:        ${_YELLOW}$MQTT_TOPIC/status${_RESET}"
     echo
@@ -669,7 +653,7 @@ show_usage_info() {
     echo
     echo "${_CYAN}=== Quick Test Commands ===${_RESET}"
     echo "Test relay control:  ${_YELLOW}$CONTROL_CLIENT on && sleep 3 && $CONTROL_CLIENT off${_RESET}"
-    echo "Monitor in real-time:${_YELLOW}$CONTROL_CLIENT monitor -t 60${_RESET}"
+    echo "Monitor in real-time:${_YELLOW}$CONTROL_CLIENT monitor${_RESET}"
     echo
 }
 
