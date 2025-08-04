@@ -140,23 +140,48 @@ STATUS_TOPIC="${MQTT_TOPIC}/relay/status"
 CONTROL_MODE_FILE="/tmp/relay_mode"
 echo "auto" > "$CONTROL_MODE_FILE"  # Default to auto mode
 
-# MQTT control listener (background process)
+# MQTT control listener (background process with better error handling)
 start_mqtt_listener() {
-    mosquitto_sub -h "$MQTT_BROKER" -p "$MQTT_PORT" -t "$CONTROL_TOPIC" -q "$MQTT_QOS" | while read -r command; do
-        echo "$(date): Received command: $command"
-        case "$command" in
-            "ON"|"on"|"1")
-                echo "manual_on" > "$CONTROL_MODE_FILE"
-                ;;
-            "OFF"|"off"|"0")
-                echo "manual_off" > "$CONTROL_MODE_FILE"
-                ;;
-            "AUTO"|"auto")
-                echo "auto" > "$CONTROL_MODE_FILE"
-                ;;
-        esac
-    done &
-    echo $! > /tmp/mqtt_listener.pid
+    echo "Starting MQTT listener for topic: $CONTROL_TOPIC"
+    
+    # Kill any existing listener
+    if [[ -f /tmp/mqtt_listener.pid ]]; then
+        old_pid=$(cat /tmp/mqtt_listener.pid)
+        kill "$old_pid" 2>/dev/null || true
+    fi
+    
+    # Start the listener with better error handling
+    (
+        while true; do
+            echo "$(date): MQTT listener connecting to $MQTT_BROKER:$MQTT_PORT"
+            mosquitto_sub -h "$MQTT_BROKER" -p "$MQTT_PORT" -t "$CONTROL_TOPIC" -q "$MQTT_QOS" 2>/dev/null | while read -r command; do
+                echo "$(date): Received MQTT command: $command"
+                case "$command" in
+                    "ON"|"on"|"1")
+                        echo "manual_on" > "$CONTROL_MODE_FILE"
+                        echo "$(date): Mode switched to manual_on"
+                        ;;
+                    "OFF"|"off"|"0")
+                        echo "manual_off" > "$CONTROL_MODE_FILE"
+                        echo "$(date): Mode switched to manual_off"
+                        ;;
+                    "AUTO"|"auto")
+                        echo "auto" > "$CONTROL_MODE_FILE"
+                        echo "$(date): Mode switched to auto"
+                        ;;
+                    *)
+                        echo "$(date): Unknown command received: $command"
+                        ;;
+                esac
+            done
+            echo "$(date): MQTT listener disconnected, reconnecting in 5 seconds..."
+            sleep 5
+        done
+    ) &
+    
+    listener_pid=$!
+    echo $listener_pid > /tmp/mqtt_listener.pid
+    echo "MQTT listener started with PID: $listener_pid"
 }
 
 # Function to control relay and publish status
@@ -164,15 +189,23 @@ control_relay() {
     local state=$1
     local reason=$2
     
+    echo "$(date): Attempting to control relay: state=$state, reason=$reason"
+    
     # Control the relay
     if mbpoll -m rtu -a 1 -b 9600 -P none -s 1 -t 0 -r 2 /dev/ttyAMA4 -- "$state" 2>/dev/null; then
-        echo "$(date): Relay $state ($reason)"
+        echo "$(date): Relay $state ($reason) - SUCCESS"
         
         # Publish status
         local status_msg="$state|$reason|$(date)"
-        mosquitto_pub -h "$MQTT_BROKER" -p "$MQTT_PORT" -t "$STATUS_TOPIC" -q "$MQTT_QOS" -m "$status_msg" 2>/dev/null || true
+        echo "$(date): Publishing status to $STATUS_TOPIC: $status_msg"
+        
+        if mosquitto_pub -h "$MQTT_BROKER" -p "$MQTT_PORT" -t "$STATUS_TOPIC" -q "$MQTT_QOS" -m "$status_msg" 2>/dev/null; then
+            echo "$(date): Status published successfully"
+        else
+            echo "$(date): ERROR: Failed to publish status to MQTT" >&2
+        fi
     else
-        echo "$(date): ERROR: Failed to control relay" >&2
+        echo "$(date): ERROR: Failed to control relay (mbpoll command failed)" >&2
     fi
 }
 
@@ -216,6 +249,19 @@ echo "Measurement interval: ${MEASUREMENT_INTERVAL}s"
 
 # Start MQTT listener in background
 start_mqtt_listener
+
+# Give the listener a moment to start, then verify it's working
+sleep 2
+if [[ -f /tmp/mqtt_listener.pid ]]; then
+    listener_pid=$(cat /tmp/mqtt_listener.pid)
+    if kill -0 "$listener_pid" 2>/dev/null; then
+        echo "MQTT listener verified running with PID: $listener_pid"
+    else
+        echo "WARNING: MQTT listener failed to start properly"
+    fi
+else
+    echo "WARNING: MQTT listener PID file not created"
+fi
 
 # Main sensor monitoring loop (based on working version)
 while true; do
