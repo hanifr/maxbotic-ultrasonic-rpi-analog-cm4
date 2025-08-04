@@ -90,7 +90,7 @@ check_dependencies() {
     log_success "All dependencies satisfied"
 }
 
-# Load MQTT configuration
+# Load and validate MQTT configuration
 load_mqtt_config() {
     if [[ -f "${SCRIPT_DIR}/mqtt_service.sh" ]]; then
         # shellcheck source=mqtt_service.sh
@@ -106,10 +106,11 @@ load_mqtt_config() {
     fi
 }
 
-# Create startup script with MQTT control capability
+# Create startup script with simple MQTT control
 create_startup_script() {
-    log_info "Creating ultrasonic sensor startup script with MQTT relay control"
+    log_info "Creating ultrasonic sensor startup script with MQTT control"
     
+    # Create the startup script based on the working version
     sudo tee "$START_SCRIPT" > /dev/null << 'EOF'
 #!/bin/bash
 
@@ -131,104 +132,65 @@ if ! validate_mqtt_config; then
     exit 1
 fi
 
-# Define control topics
+# Control topics
 CONTROL_TOPIC="${MQTT_TOPIC}/relay/control"
 STATUS_TOPIC="${MQTT_TOPIC}/relay/status"
 
-# Control files for relay state management
-CONTROL_FILE="/tmp/relay_control"
-RELAY_STATE_FILE="/tmp/relay_state"
+# Control file for mode switching
+CONTROL_MODE_FILE="/tmp/relay_mode"
+echo "auto" > "$CONTROL_MODE_FILE"  # Default to auto mode
 
-# Initialize control files
-echo "auto" > "$CONTROL_FILE"  # auto, manual_on, manual_off
-echo "0" > "$RELAY_STATE_FILE"  # 0 = off, 1 = on
+# MQTT control listener (background process)
+start_mqtt_listener() {
+    mosquitto_sub -h "$MQTT_BROKER" -p "$MQTT_PORT" -t "$CONTROL_TOPIC" -q "$MQTT_QOS" | while read -r command; do
+        echo "$(date): Received command: $command"
+        case "$command" in
+            "ON"|"on"|"1")
+                echo "manual_on" > "$CONTROL_MODE_FILE"
+                ;;
+            "OFF"|"off"|"0")
+                echo "manual_off" > "$CONTROL_MODE_FILE"
+                ;;
+            "AUTO"|"auto")
+                echo "auto" > "$CONTROL_MODE_FILE"
+                ;;
+        esac
+    done &
+    echo $! > /tmp/mqtt_listener.pid
+}
 
-# Function to control relay
+# Function to control relay and publish status
 control_relay() {
     local state=$1
     local reason=$2
     
-    # Read current state
-    local current_state
-    current_state=$(cat "$RELAY_STATE_FILE" 2>/dev/null || echo "0")
-    
-    # Only change if state is different
-    if [[ "$state" != "$current_state" ]]; then
-        if mbpoll -m rtu -a 1 -b 9600 -P none -s 1 -t 0 -r 2 /dev/ttyAMA4 -- "$state" 2>/dev/null; then
-            echo "$state" > "$RELAY_STATE_FILE"
-            echo "$(date): Relay ${state} (${reason})"
-            
-            # Publish relay state to MQTT
-            local relay_status="OFF"
-            [[ "$state" == "1" ]] && relay_status="ON"
-            
-            local status_payload="${relay_status}|${reason}|$(date +"%Y-%m-%dT%H:%M:%S")"
-            
-            mosquitto_pub -h "$MQTT_BROKER" \
-                         -p "$MQTT_PORT" \
-                         -t "$STATUS_TOPIC" \
-                         -q "$MQTT_QOS" \
-                         -m "$status_payload" 2>/dev/null || true
-        else
-            echo "$(date): ERROR: Failed to control relay" >&2
-        fi
+    # Control the relay
+    if mbpoll -m rtu -a 1 -b 9600 -P none -s 1 -t 0 -r 2 /dev/ttyAMA4 -- "$state" 2>/dev/null; then
+        echo "$(date): Relay $state ($reason)"
+        
+        # Publish status
+        local status_msg="$state|$reason|$(date)"
+        mosquitto_pub -h "$MQTT_BROKER" -p "$MQTT_PORT" -t "$STATUS_TOPIC" -q "$MQTT_QOS" -m "$status_msg" 2>/dev/null || true
+    else
+        echo "$(date): ERROR: Failed to control relay" >&2
     fi
-}
-
-# MQTT control listener function
-mqtt_control_listener() {
-    echo "Starting MQTT control listener on topic: $CONTROL_TOPIC"
-    
-    mosquitto_sub -h "$MQTT_BROKER" \
-                  -p "$MQTT_PORT" \
-                  -t "$CONTROL_TOPIC" \
-                  -q "$MQTT_QOS" | while read -r message; do
-        
-        echo "$(date): Received MQTT control: $message"
-        
-        case "$message" in
-            "ON"|"on"|"1")
-                echo "manual_on" > "$CONTROL_FILE"
-                control_relay "1" "MQTT ON command"
-                ;;
-            "OFF"|"off"|"0")
-                echo "manual_off" > "$CONTROL_FILE"
-                control_relay "0" "MQTT OFF command"
-                ;;
-            "AUTO"|"auto")
-                echo "auto" > "$CONTROL_FILE"
-                echo "$(date): Relay control set to automatic mode"
-                ;;
-            *)
-                echo "$(date): Unknown control command: $message" >&2
-                ;;
-        esac
-    done &
-    
-    # Store PID for cleanup
-    echo $! > /tmp/mqtt_listener.pid
 }
 
 # Function to handle shutdown gracefully
 cleanup() {
     echo "Shutting down ultrasonic sensor service..."
     
-    # Kill MQTT listener if running
+    # Kill MQTT listener
     if [[ -f /tmp/mqtt_listener.pid ]]; then
-        local listener_pid
-        listener_pid=$(cat /tmp/mqtt_listener.pid)
-        if kill -0 "$listener_pid" 2>/dev/null; then
-            kill "$listener_pid" 2>/dev/null || true
-        fi
+        kill "$(cat /tmp/mqtt_listener.pid)" 2>/dev/null || true
         rm -f /tmp/mqtt_listener.pid
     fi
     
-    # Turn off relay on shutdown
-    control_relay "0" "Service shutdown"
+    # Turn off relay
+    mbpoll -m rtu -a 1 -b 9600 -P none -s 1 -t 0 -r 2 /dev/ttyAMA4 -- 0 2>/dev/null || true
     
-    # Cleanup temp files
-    rm -f "$CONTROL_FILE" "$RELAY_STATE_FILE"
-    
+    # Cleanup
+    rm -f "$CONTROL_MODE_FILE"
     exit 0
 }
 
@@ -244,7 +206,7 @@ fi
 OUTPUT_DIR="$(dirname "$OUTPUT_FILE")"
 [[ ! -d "$OUTPUT_DIR" ]] && mkdir -p "$OUTPUT_DIR"
 
-echo "Starting ultrasonic sensor monitoring with MQTT relay control..."
+echo "Starting ultrasonic sensor monitoring with MQTT control..."
 echo "Sensor: $SENSOR_DIR"
 echo "MQTT Broker: $MQTT_BROKER:$MQTT_PORT"
 echo "Data Topic: $MQTT_TOPIC"
@@ -252,10 +214,10 @@ echo "Control Topic: $CONTROL_TOPIC"
 echo "Status Topic: $STATUS_TOPIC"
 echo "Measurement interval: ${MEASUREMENT_INTERVAL}s"
 
-# Start MQTT control listener
-mqtt_control_listener
+# Start MQTT listener in background
+start_mqtt_listener
 
-# Continuous measurement loop
+# Main sensor monitoring loop (based on working version)
 while true; do
     if RAW_VALUE=$(cat "$SENSOR_DIR/in_voltage1_raw" 2>/dev/null); then
         # Calculate distance using bc for floating point arithmetic
@@ -276,36 +238,39 @@ JSON_EOF
         
         # Save data locally with timestamp
         echo "$TIMESTAMP,$ULTRASONIC_DISTANCE" >> "$OUTPUT_FILE"
-        
+
         # Check control mode
-        CONTROL_MODE=$(cat "$CONTROL_FILE" 2>/dev/null || echo "auto")
+        CONTROL_MODE=$(cat "$CONTROL_MODE_FILE" 2>/dev/null || echo "auto")
         
         case "$CONTROL_MODE" in
             "auto")
-                # Automatic control based on distance threshold
+                # Original working logic - automatic control based on distance
                 THRESHOLD=5.0
                 is_below_threshold=$(echo "$ULTRASONIC_DISTANCE < $THRESHOLD" | bc)
-                
                 if [[ $is_below_threshold -eq 1 ]]; then
+                    # Turn on the relay if distance is below threshold
                     control_relay "1" "Distance: ${ULTRASONIC_DISTANCE}m < ${THRESHOLD}m"
                     
-                    # Publish sensor data to MQTT when relay is on
+                    # Publish to MQTT broker (original working logic)
                     if mosquitto_pub -h "$MQTT_BROKER" \
                                       -p "$MQTT_PORT" \
                                       -t "$MQTT_TOPIC" \
                                       -q "$MQTT_QOS" \
                                       -m "$JSON_PAYLOAD" 2>/dev/null; then
-                        echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m (published)"
+                        echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m (published successfully)"
                     else
-                        echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m (publish failed)" >&2
+                        echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m (MQTT publish failed)" >&2
                     fi
                 else
+                    # Turn off the relay if distance is above threshold
                     control_relay "0" "Distance: ${ULTRASONIC_DISTANCE}m >= ${THRESHOLD}m"
-                    echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m (above threshold)"
+                    echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m (above threshold, relay off)"
+                    # Don't publish when above threshold (original logic)
                 fi
                 ;;
             "manual_on")
-                # Manual ON mode - always publish data
+                # Manual ON mode - force relay on and always publish
+                control_relay "1" "Manual ON mode"
                 if mosquitto_pub -h "$MQTT_BROKER" \
                                   -p "$MQTT_PORT" \
                                   -t "$MQTT_TOPIC" \
@@ -317,8 +282,9 @@ JSON_EOF
                 fi
                 ;;
             "manual_off")
-                # Manual OFF mode - don't publish, just log
-                echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m (manual OFF)"
+                # Manual OFF mode - force relay off, no publishing
+                control_relay "0" "Manual OFF mode"
+                echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m (manual OFF, not published)"
                 ;;
         esac
         
@@ -349,18 +315,28 @@ create_systemd_service() {
     
     sudo tee "$SERVICE_FILE" > /dev/null << EOF
 [Unit]
-Description=Maxbotic Ultrasonic Sensor Service with MQTT Relay Control
+Description=Maxbotic Ultrasonic Sensor Service with MQTT Control
+Documentation=man:ultrasonic-sensor(1)
 After=network.target mosquitto.service
 Wants=mosquitto.service
 
 [Service]
 Type=simple
 ExecStart=$START_SCRIPT
+ExecReload=/bin/kill -HUP \$MAINPID
 Restart=on-failure
 RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=3
 User=$service_user
 Group=$service_user
 WorkingDirectory=$USER_HOME
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=$USER_HOME /tmp
 
 # Logging
 StandardOutput=journal
@@ -398,7 +374,7 @@ setup_service() {
     fi
     
     # Wait a moment and check service status
-    sleep 3
+    sleep 2
     if systemctl is-active --quiet "$SERVICE_NAME"; then
         log_success "Service is running successfully"
     else
@@ -415,12 +391,13 @@ show_usage_info() {
     echo "Start service:       ${_YELLOW}sudo systemctl start $SERVICE_NAME${_RESET}"
     echo "Stop service:        ${_YELLOW}sudo systemctl stop $SERVICE_NAME${_RESET}"
     echo "Restart service:     ${_YELLOW}sudo systemctl restart $SERVICE_NAME${_RESET}"
+    echo "Disable service:     ${_YELLOW}sudo systemctl disable $SERVICE_NAME${_RESET}"
     echo
-    echo "${_CYAN}=== MQTT Relay Control Commands ===${_RESET}"
+    echo "${_CYAN}=== MQTT Control Commands ===${_RESET}"
     echo "Turn relay ON:       ${_YELLOW}mosquitto_pub -h $MQTT_BROKER -t $MQTT_TOPIC/relay/control -m \"ON\"${_RESET}"
     echo "Turn relay OFF:      ${_YELLOW}mosquitto_pub -h $MQTT_BROKER -t $MQTT_TOPIC/relay/control -m \"OFF\"${_RESET}"
-    echo "Set to AUTO mode:    ${_YELLOW}mosquitto_pub -h $MQTT_BROKER -t $MQTT_TOPIC/relay/control -m \"AUTO\"${_RESET}"
-    echo "Monitor relay status: ${_YELLOW}mosquitto_sub -h $MQTT_BROKER -t $MQTT_TOPIC/relay/status${_RESET}"
+    echo "Set AUTO mode:       ${_YELLOW}mosquitto_pub -h $MQTT_BROKER -t $MQTT_TOPIC/relay/control -m \"AUTO\"${_RESET}"
+    echo "Monitor status:      ${_YELLOW}mosquitto_sub -h $MQTT_BROKER -t $MQTT_TOPIC/relay/status${_RESET}"
     echo
     echo "${_CYAN}=== Configuration Files ===${_RESET}"
     echo "Startup script:      ${_YELLOW}$START_SCRIPT${_RESET}"
@@ -428,8 +405,8 @@ show_usage_info() {
     echo "MQTT config:         ${_YELLOW}${SCRIPT_DIR}/mqtt_service.sh${_RESET}"
     echo
     echo "${_CYAN}=== Control Modes ===${_RESET}"
-    echo "AUTO:    Relay controlled by distance threshold (< 5.0m = ON)"
-    echo "MANUAL:  Relay controlled by MQTT commands (ON/OFF)"
+    echo "AUTO:     Original behavior - relay ON when distance < 5.0m, publish only when ON"
+    echo "MANUAL:   Override automatic control - ON/OFF commands via MQTT"
     echo
 }
 
@@ -451,7 +428,7 @@ main() {
     create_systemd_service
     setup_service
     
-    log_success "Maxbotic Ultrasonic service with MQTT relay control setup completed successfully!"
+    log_success "Maxbotic Ultrasonic service with MQTT control setup completed successfully!"
     show_usage_info
 }
 
