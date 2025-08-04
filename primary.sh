@@ -167,6 +167,19 @@ JSON_EOF
         
         # Save data locally with timestamp
         echo "$TIMESTAMP,$ULTRASONIC_DISTANCE" >> "$OUTPUT_FILE"
+
+        THRESHOLD=5.0
+        is_below_threshold=$(echo "$ULTRASONIC_DISTANCE < $THRESHOLD" | bc)
+        if [[ $is_below_threshold -eq 1 ]]; then
+            # Turn on the relay if distance is below threshold
+            # echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m (below threshold, publishing to MQTT)"
+            mbpoll -m rtu -a 1 -b 9600 -P none -s 1 -t 0 -r 2 /dev/ttyAMA4 -- 1
+        else
+            # Turn off the relay if distance is above threshold
+            # echo "$(date): Distance: ${ULTRASONIC_DISTANCE}m (above threshold, not publishing)"
+            mbpoll -m rtu -a 1 -b 9600 -P none -s 1 -t 0 -r 2 /dev/ttyAMA4 -- 0
+            continue
+        fi
         
         # Publish to MQTT broker with error handling
         if mosquitto_pub -h "$MQTT_BROKER" \

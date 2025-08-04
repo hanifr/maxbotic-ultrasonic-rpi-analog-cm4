@@ -74,8 +74,8 @@ main() {
     fi
     
     # Install dependencies
-    log_info "Installing Mosquitto MQTT broker and clients"
-    if sudo apt update && sudo apt install -y mosquitto mosquitto-clients bc; then
+    log_info "Updating package lists and installing dependencies"
+    if sudo apt update && sudo apt install -y mbpoll mosquitto mosquitto-clients bc; then
         log_success "Dependencies installed successfully"
     else
         log_error "Failed to install dependencies"
