@@ -1,25 +1,25 @@
-# Maxbotic Ultrasonic Sensor with MQTT Relay Control for Raspberry Pi CM4
+# Maxbotic Ultrasonic Sensor with Simple MQTT Remote Control for Raspberry Pi CM4
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red.svg)](https://www.raspberrypi.org/)
 [![MQTT](https://img.shields.io/badge/protocol-MQTT-blue.svg)](https://mqtt.org/)
 
-A robust, production-ready solution for interfacing Maxbotic ultrasonic sensors with Raspberry Pi CM4 using analog input. This system provides continuous distance monitoring with real-time data transmission via MQTT protocol, plus simple remote relay control capabilities for automation and control applications.
+A robust, production-ready solution for interfacing Maxbotic ultrasonic sensors with Raspberry Pi CM4 using analog input. This system provides continuous distance monitoring with real-time data transmission via MQTT protocol, plus **simple remote relay control** capabilities for automation and control applications.
 
 ## 🚀 Features
 
 - **Real-time Distance Monitoring** - Continuous sensor data acquisition every 2 seconds
 - **MQTT Integration** - Automatic data publishing to cloud/remote brokers
-- **Simple MQTT Relay Control** - Remote relay switching with AUTO/Manual modes
+- **Simple Remote Relay Control** - Easy 3-command remote switching (ON/OFF/AUTO)
 - **Smart Threshold Control** - Automatic relay activation based on distance thresholds (< 5.0m)
-- **Three Control Modes** - AUTO (threshold-based), Manual ON, Manual OFF
+- **Three Control Modes** - AUTO (original behavior), Manual ON, Manual OFF
 - **JSON Data Format** - Structured sensor data with timestamps and metadata
 - **Systemd Service** - Robust background service with automatic startup
 - **Local Data Logging** - CSV format with timestamps for offline analysis
-- **Real-time Status Updates** - Simple relay status publishing via MQTT
+- **Minimal Complexity** - Simple file-based remote control (no complex background processes)
 - **Error Handling** - Comprehensive error detection and recovery
 - **Easy Configuration** - Environment-based MQTT settings
-- **Flexible Installation** - Works with any user (not hardcoded to 'pi')
+- **Preserves Original Logic** - AUTO mode maintains exact original working behavior
 
 ## 📋 Requirements
 
@@ -135,15 +135,14 @@ export OUTPUT_FILE="/home/pi/ultrasonic.txt"
 
 ### MQTT Topics Structure
 
-The system uses the following topic structure:
+The system uses a simple topic structure:
 
 ```bash
 # Base topic (from MQTT_TOPIC)
 dtonggang/ultrasonic-01                    # Sensor data publishing
 
-# Control topics (automatically derived)
-dtonggang/ultrasonic-01/relay/control      # Send relay commands
-dtonggang/ultrasonic-01/relay/status       # Receive relay status updates
+# Control topic (automatically derived)
+dtonggang/ultrasonic-01/control            # Send simple relay commands
 ```
 
 ## 🚀 Usage
@@ -155,7 +154,7 @@ dtonggang/ultrasonic-01/relay/status       # Receive relay status updates
 sudo journalctl -u maxbotic_ultrasonic -f
 
 # Check service status
-sudo systemctl status maxbotic_ultrasonic
+sudo systemctl status maxbonic_ultrasonic
 
 # Start/Stop/Restart service
 sudo systemctl start maxbotic_ultrasonic
@@ -167,43 +166,54 @@ sudo systemctl enable maxbotic_ultrasonic
 sudo systemctl disable maxbotic_ultrasonic
 ```
 
-### MQTT Relay Control
+### Simple Remote Control
 
-#### Control Commands
+#### Using the Control Client (Recommended)
 
 ```bash
 # Turn relay ON manually (overrides automatic control)
-mosquitto_pub -h xx.xxx.xxx -t "dtonggang/ultrasonic-01/relay/control" -m "ON"
+./relay_control_client.sh on
 
 # Turn relay OFF manually (overrides automatic control)
-mosquitto_pub -h xx.xxx.xxx -t "dtonggang/ultrasonic-01/relay/control" -m "OFF"
+./relay_control_client.sh off
 
 # Switch back to automatic mode (distance-based control)
-mosquitto_pub -h xx.xxx.xxx -t "dtonggang/ultrasonic-01/relay/control" -m "AUTO"
+./relay_control_client.sh auto
+```
 
-# Monitor relay status changes
-mosquitto_sub -h xx.xxx.xxx -t "dtonggang/ultrasonic-01/relay/status"
+#### Using MQTT Commands Directly
+
+```bash
+# Turn relay ON manually
+mosquitto_pub -h xx.xxx.xxx -t "dtonggang/ultrasonic-01/control" -m '{"relay": "on"}'
+
+# Turn relay OFF manually
+mosquitto_pub -h xx.xxx.xxx -t "dtonggang/ultrasonic-01/control" -m '{"relay": "off"}'
+
+# Switch back to automatic mode
+mosquitto_pub -h xx.xxx.xxx -t "dtonggang/ultrasonic-01/control" -m '{"mode": "auto"}'
 ```
 
 #### Control Modes
 
 1. **AUTO Mode** (Default)
-   - **Behavior**: Original working logic preserved
+   - **Behavior**: Original working logic preserved exactly
    - Relay turns ON when distance < 5.0m
    - Relay turns OFF when distance ≥ 5.0m
    - Publishes sensor data only when relay is ON (distance < 5.0m)
-   - This is the exact behavior from your original working script
+   - Uses `continue` to skip MQTT publishing when above threshold
+   - This maintains the exact behavior from your original working script
 
 2. **Manual ON Mode**
-   - **Triggered by**: `ON`, `on`, or `1` command
+   - **Triggered by**: `{"relay": "on"}` command
    - Relay stays ON regardless of distance
-   - Continuously publishes sensor data
+   - Always publishes sensor data (shows manual_mode: true)
    - Overrides automatic threshold control
 
 3. **Manual OFF Mode**
-   - **Triggered by**: `OFF`, `off`, or `0` command
+   - **Triggered by**: `{"relay": "off"}` command
    - Relay stays OFF regardless of distance
-   - Logs distance locally but doesn't publish via MQTT
+   - Always publishes sensor data (shows manual_mode: true)
    - Overrides automatic threshold control
 
 ### Data Format
@@ -215,17 +225,9 @@ mosquitto_sub -h xx.xxx.xxx -t "dtonggang/ultrasonic-01/relay/status"
     "unit": "meters",
     "timestamp": "2025-08-04T10:30:45.123",
     "sensor_id": "cm4-1",
-    "raw_value": 161
+    "raw_value": 161,
+    "manual_mode": false
 }
-```
-
-#### MQTT Relay Status Messages
-Simple pipe-delimited status messages:
-```
-1|Distance: 3.245m < 5.0m|Mon Aug  4 10:30:45 2025
-0|Distance: 6.789m >= 5.0m|Mon Aug  4 10:30:47 2025
-1|Manual ON mode|Mon Aug  4 10:31:00 2025
-0|Manual OFF mode|Mon Aug  4 10:32:15 2025
 ```
 
 #### Local Log File (CSV)
@@ -249,7 +251,7 @@ mbpoll -m rtu -a 1 -b 9600 -P none -s 1 -t 0 -r 2 /dev/ttyAMA4 -- 1  # ON
 mbpoll -m rtu -a 1 -b 9600 -P none -s 1 -t 0 -r 2 /dev/ttyAMA4 -- 0  # OFF
 
 # Check control mode
-cat /tmp/relay_mode
+cat /tmp/relay_control
 
 # Run sensor script manually
 sudo ~/startUltrasonic.sh
@@ -270,7 +272,7 @@ sudo journalctl -u maxbotic_ultrasonic -o short-iso
 sudo journalctl -u maxbotic_ultrasonic -f
 
 # Filter for relay control messages
-sudo journalctl -u maxbotic_ultrasonic -f | grep -i "command\|relay"
+sudo journalctl -u maxbotic_ultrasonic -f | grep -i "command\|relay\|manual"
 ```
 
 ### Common Issues
@@ -299,22 +301,19 @@ ping xx.xxx.xxx
 source mqtt_service.sh && validate_mqtt_config
 ```
 
-#### MQTT Control Not Working
+#### Remote Control Not Working
 ```bash
-# Check if MQTT listener is running
-ps aux | grep mosquitto_sub
+# Test simple control command
+./relay_control_client.sh on
 
-# Check control mode file
-cat /tmp/relay_mode
+# Check if control file is created
+ls -la /tmp/relay_control
 
-# Test control command manually
-mosquitto_pub -h xx.xxx.xxx -t "dtonggang/ultrasonic-01/relay/control" -m "ON"
+# Test MQTT command directly
+mosquitto_pub -h xx.xxx.xxx -t "dtonggang/ultrasonic-01/control" -m '{"relay": "on"}'
 
-# Monitor for status responses
-mosquitto_sub -h xx.xxx.xxx -t "dtonggang/ultrasonic-01/relay/status"
-
-# Check listener PID file
-cat /tmp/mqtt_listener.pid 2>/dev/null || echo "Listener PID file not found"
+# Check for control messages in logs
+sudo journalctl -u maxbotic_ultrasonic -f | grep -i "command\|mqtt"
 ```
 
 #### Relay Control Issues
@@ -341,34 +340,18 @@ cat /sys/bus/iio/devices/iio:device0/in_voltage1_raw
 ls -la /sys/bus/iio/devices/iio:device0/in_voltage1_raw
 ```
 
-### Performance Monitoring
-
-```bash
-# Monitor system resources
-top -p $(pgrep -f startUltrasonic.sh)
-
-# Check disk usage for logs
-du -h /var/log/journal/
-
-# Monitor MQTT data traffic
-mosquitto_sub -h xx.xxx.xxx -t "dtonggang/ultrasonic-01"
-
-# Monitor MQTT control traffic
-mosquitto_sub -h xx.xxx.xxx -t "dtonggang/ultrasonic-01/relay/+"
-```
-
 ## 📁 File Structure
 
 ```
 maxbotic-ultrasonic-rpi-analog-cm4/
 ├── init.sh                     # Main installation script
-├── primary.sh                  # Service setup script
+├── primary.sh                  # Service setup script (with simple remote control)
 ├── mqtt_service.sh             # MQTT configuration
 ├── README.md                   # This file
-├── ~/startUltrasonic.sh        # Generated sensor script (with simple MQTT control)
+├── ~/startUltrasonic.sh        # Generated sensor script (with simple remote control)
+├── ~/relay_control_client.sh   # Simple 3-command control client
 ├── /etc/systemd/system/maxbotic_ultrasonic.service # System service
-└── /tmp/relay_mode             # Runtime control mode file (auto/manual_on/manual_off)
-└── /tmp/mqtt_listener.pid      # Background MQTT listener process ID
+└── /tmp/relay_control          # Simple control command file (temporary)
 ```
 
 ## 🔄 System Architecture
@@ -378,31 +361,27 @@ graph TD
     A[Ultrasonic Sensor] --> B[Analog Input Reading]
     B --> C[Distance Calculation]
     
-    D[MQTT Control Commands] --> E[Background mosquitto_sub]
-    E --> F[Update Control Mode File]
+    D[MQTT Control Commands] --> E[Simple timeout MQTT check every 5 cycles]
+    E --> F[Update Control File /tmp/relay_control]
     
-    C --> G{Check Control Mode}
-    G -->|auto| H[Original Logic: Distance < 5.0m?]
-    G -->|manual_on| I[Force Relay ON + Always Publish]
-    G -->|manual_off| J[Force Relay OFF + No Publishing]
+    C --> G{Check Control File}
+    G -->|auto or empty| H[Original Logic: Distance < 5.0m?]
+    G -->|manual ON| I[Force Relay ON + Always Publish]
+    G -->|manual OFF| J[Force Relay OFF + Always Publish]
     
     H -->|Yes| K[Relay ON + Publish Data]
-    H -->|No| L[Relay OFF + Log Only]
+    H -->|No| L[Relay OFF + Skip Publishing - continue]
     
     K --> M[Local CSV Log]
     I --> M
+    J --> M
     L --> M
     
     K --> N[MQTT Data Publish]
     I --> N
-    
-    K --> O[MQTT Status Publish]
-    L --> O
-    I --> O
-    J --> O
+    J --> N
     
     N --> P[Cloud/Remote Broker]
-    O --> P
 ```
 
 ## 🛠️ Development
@@ -422,17 +401,17 @@ bash -n init.sh
 sudo systemctl daemon-reload
 sudo systemctl status maxbotic_ultrasonic
 
-# Test MQTT control flow
-mosquitto_pub -h xx.xxx.xxx -t "dtonggang/ultrasonic-01/relay/control" -m "ON"
-cat /tmp/relay_mode  # Should show "manual_on"
+# Test simple control flow
+./relay_control_client.sh on
+cat /tmp/relay_control  # Should show "on"
 
-mosquitto_pub -h xx.xxx.xxx -t "dtonggang/ultrasonic-01/relay/control" -m "AUTO"
-cat /tmp/relay_mode  # Should show "auto"
+./relay_control_client.sh auto
+ls /tmp/relay_control   # File should be removed or empty
 ```
 
 ### Adding Features
 
-The modular design allows easy extension:
+The simple modular design allows easy extension:
 
 - **New sensors**: Modify calculation in `startUltrasonic.sh`
 - **Different protocols**: Add to `mqtt_service.sh`
@@ -440,7 +419,7 @@ The modular design allows easy extension:
 - **Alert system**: Add threshold monitoring
 - **Multiple relays**: Extend relay control logic
 - **Custom thresholds**: Modify the 5.0m threshold in AUTO mode
-- **Additional control modes**: Add new modes to the case statement
+- **Additional control modes**: Add new commands to control client
 
 ## 🎯 Use Cases
 
@@ -460,7 +439,7 @@ The modular design allows easy extension:
 - **Livestock Monitoring**: Track animal presence with relay-controlled systems
 
 ### Remote Operations
-- **Manual Override**: Remote operators can override automatic systems via MQTT
+- **Manual Override**: Remote operators can override automatic systems via simple MQTT commands
 - **Emergency Control**: Instantly turn systems ON/OFF regardless of sensor readings
 - **Maintenance Mode**: Disable automatic operation during maintenance
 
@@ -468,7 +447,7 @@ The modular design allows easy extension:
 
 ### Installation Output
 ```
-[INFO] Maxbotic Ultrasonic Sensor service setup started
+[INFO] Maxbotic Ultrasonic Sensor service setup with simple remote control started
 [SUCCESS] All dependencies satisfied
 [MQTT-INFO] MQTT configuration validated successfully
 [MQTT-INFO] Broker: xx.xxx.xxx:1883
@@ -476,17 +455,17 @@ The modular design allows easy extension:
 [MQTT-INFO] Client ID: cm4-1
 [MQTT-INFO] MQTT connection test successful
 [SUCCESS] Startup script created at /home/user/startUltrasonic.sh
+[SUCCESS] Simple control client created at /home/user/relay_control_client.sh
 [SUCCESS] Systemd service created
 [SUCCESS] Service enabled successfully
 [SUCCESS] Service started successfully
 [SUCCESS] Service is running successfully
-[SUCCESS] Maxbotic Ultrasonic service with MQTT control setup completed successfully!
+[SUCCESS] Maxbotic Ultrasonic service with simple remote control setup completed successfully!
 
-=== MQTT Control Commands ===
-Turn relay ON:       mosquitto_pub -h xx.xxx.xxx -t dtonggang/ultrasonic-01/relay/control -m "ON"
-Turn relay OFF:      mosquitto_pub -h xx.xxx.xxx -t dtonggang/ultrasonic-01/relay/control -m "OFF"
-Set AUTO mode:       mosquitto_pub -h xx.xxx.xxx -t dtonggang/ultrasonic-01/relay/control -m "AUTO"
-Monitor status:      mosquitto_sub -h xx.xxx.xxx -t dtonggang/ultrasonic-01/relay/status
+=== Simple Remote Control ===
+Turn relay ON:       ./relay_control_client.sh on
+Turn relay OFF:      ./relay_control_client.sh off
+Auto mode:           ./relay_control_client.sh auto
 
 === Control Modes ===
 AUTO:     Original behavior - relay ON when distance < 5.0m, publish only when ON
@@ -496,12 +475,11 @@ MANUAL:   Override automatic control - ON/OFF commands via MQTT
 ### Runtime Logs
 ```
 Mon Aug  4 10:30:45 2025: Distance: 3.245m (published successfully)
-Mon Aug  4 10:30:47 2025: Distance: 6.789m (above threshold, relay off)
-Mon Aug  4 10:31:00 2025: Received command: ON
-Mon Aug  4 10:31:00 2025: Relay 1 (Manual ON mode)
-Mon Aug  4 10:31:02 2025: Distance: 6.789m (manual ON, published)
-Mon Aug  4 10:31:15 2025: Received command: AUTO
-Mon Aug  4 10:31:17 2025: Distance: 6.789m (above threshold, relay off)
+Mon Aug  4 10:30:47 2025: Distance: 6.789m (above threshold, not publishing)
+Mon Aug  4 10:31:00 2025: MQTT command: Relay ON
+Mon Aug  4 10:31:02 2025: Distance: 6.789m (manual mode, published successfully)
+Mon Aug  4 10:31:15 2025: MQTT command: Auto mode
+Mon Aug  4 10:31:17 2025: Distance: 6.789m (above threshold, not publishing)
 ```
 
 ## 🔧 Advanced Configuration
@@ -531,6 +509,27 @@ export MQTT_CLIENT_ID="cm4-2"
 # Run primary.sh with different config
 MQTT_CONFIG="mqtt_service_02.sh" ./primary.sh
 ```
+
+### Control Check Frequency
+By default, the system checks for remote commands every 5 sensor readings. To modify:
+
+```bash
+# Edit the generated script
+sudo nano ~/startUltrasonic.sh
+
+# Find and modify this line:
+if [[ $((CONTROL_CHECK_COUNTER % 5)) -eq 0 ]]; then  # Change 5 to your desired frequency
+```
+
+## 💡 Design Philosophy
+
+This implementation prioritizes **simplicity and reliability** over complex features:
+
+- **File-based control**: Simple, atomic file operations instead of complex IPC
+- **Periodic checking**: Non-blocking control checks every few cycles
+- **Preserved original logic**: AUTO mode maintains exact original behavior
+- **Minimal dependencies**: No additional processes or background services
+- **Easy troubleshooting**: Simple file-based state that's easy to inspect
 
 ## 🤝 Contributing
 
