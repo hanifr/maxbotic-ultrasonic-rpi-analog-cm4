@@ -1,25 +1,26 @@
-# Maxbotic Ultrasonic Sensor with Simple MQTT Remote Control for Raspberry Pi CM4
+# Maxbotic Ultrasonic Sensor with Simple Remote Control for Raspberry Pi CM4
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)  
 [![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red.svg)](https://www.raspberrypi.org/)
 [![MQTT](https://img.shields.io/badge/protocol-MQTT-blue.svg)](https://mqtt.org/)
 
-A robust, production-ready solution for interfacing Maxbotic ultrasonic sensors with Raspberry Pi CM4 using analog input. This system provides continuous distance monitoring with real-time data transmission via MQTT protocol, plus **simple remote relay control** capabilities for automation and control applications.
+A robust, production-ready solution for interfacing Maxbotic ultrasonic sensors with Raspberry Pi CM4 using analog input. This system provides continuous distance monitoring with real-time data transmission via MQTT protocol, enhanced with **simple 3-command remote control** (ON/OFF/AUTO) while preserving the original elegant working logic.
 
 ## 🚀 Features
 
 - **Real-time Distance Monitoring** - Continuous sensor data acquisition every 2 seconds
 - **MQTT Integration** - Automatic data publishing to cloud/remote brokers
-- **Simple Remote Relay Control** - Easy 3-command remote switching (ON/OFF/AUTO)
+- **Simple 3-Command Remote Control** - Easy remote switching: ON/OFF/AUTO via MQTT
+- **Preserves Original Logic** - AUTO mode maintains exact original behavior and structure
 - **Smart Threshold Control** - Automatic relay activation based on distance thresholds (< 5.0m)
 - **Three Control Modes** - AUTO (original behavior), Manual ON, Manual OFF
 - **JSON Data Format** - Structured sensor data with timestamps and metadata
 - **Systemd Service** - Robust background service with automatic startup
 - **Local Data Logging** - CSV format with timestamps for offline analysis
-- **Minimal Complexity** - Simple file-based remote control (no complex background processes)
+- **Minimal Overhead** - Simple periodic control check every 5 sensor readings
+- **No Complex Processes** - File-based + simple MQTT timeout approach
 - **Error Handling** - Comprehensive error detection and recovery
 - **Easy Configuration** - Environment-based MQTT settings
-- **Preserves Original Logic** - AUTO mode maintains exact original working behavior
 
 ## 📋 Requirements
 
@@ -36,7 +37,7 @@ A robust, production-ready solution for interfacing Maxbotic ultrasonic sensors 
 ### Dependencies
 The installation script will automatically install:
 - `mosquitto` - MQTT broker/client
-- `mosquitto-clients` - MQTT command-line tools
+- `mosquitto-clients` - MQTT command-line tools (including mosquitto_sub for remote control)
 - `bc` - Mathematical calculations
 - `mbpoll` - Modbus polling utility for relay control
 - `systemd` - Service management (pre-installed)
@@ -83,9 +84,10 @@ Distance (meters) = (raw_value * 10) / 1303
 
 3. **Configure MQTT settings** (see Configuration section below)
 
-4. **Verify installation:**
+4. **Test remote control:**
    ```bash
-   sudo systemctl status maxbotic_ultrasonic
+   ./relay_control_client.sh on    # Turn relay ON
+   ./relay_control_client.sh auto  # Back to automatic mode
    ```
 
 ### Manual Installation
@@ -250,8 +252,8 @@ mosquitto_pub -h xx.xxx.xxx -p 1883 -t test/topic -m "test message"
 mbpoll -m rtu -a 1 -b 9600 -P none -s 1 -t 0 -r 2 /dev/ttyAMA4 -- 1  # ON
 mbpoll -m rtu -a 1 -b 9600 -P none -s 1 -t 0 -r 2 /dev/ttyAMA4 -- 0  # OFF
 
-# Check control mode
-cat /tmp/relay_control
+# Check control file
+cat /tmp/relay_control 2>/dev/null || echo "No control command active"
 
 # Run sensor script manually
 sudo ~/startUltrasonic.sh
@@ -345,13 +347,13 @@ ls -la /sys/bus/iio/devices/iio:device0/in_voltage1_raw
 ```
 maxbotic-ultrasonic-rpi-analog-cm4/
 ├── init.sh                     # Main installation script
-├── primary.sh                  # Service setup script (with simple remote control)
+├── primary.sh                  # Enhanced service setup script (with simple remote control)
 ├── mqtt_service.sh             # MQTT configuration
 ├── README.md                   # This file
-├── ~/startUltrasonic.sh        # Generated sensor script (with simple remote control)
-├── ~/relay_control_client.sh   # Simple 3-command control client
+├── ~/startUltrasonic.sh        # Generated sensor script (with simple remote control listening)
+├── ~/relay_control_client.sh   # Simple 3-command control client (auto-generated)
 ├── /etc/systemd/system/maxbotic_ultrasonic.service # System service
-└── /tmp/relay_control          # Simple control command file (temporary)
+└── /tmp/relay_control          # Simple control command file (temporary, when active)
 ```
 
 ## 🔄 System Architecture
@@ -361,27 +363,40 @@ graph TD
     A[Ultrasonic Sensor] --> B[Analog Input Reading]
     B --> C[Distance Calculation]
     
-    D[MQTT Control Commands] --> E[Simple timeout MQTT check every 5 cycles]
-    E --> F[Update Control File /tmp/relay_control]
+    D[MQTT Control Commands] --> E[Simple timeout check every 5 sensor cycles]
+    F[Control Client Commands] --> G[Write to /tmp/relay_control file]
+    E --> H[Parse JSON command]
+    G --> I[Read control file]
     
-    C --> G{Check Control File}
-    G -->|auto or empty| H[Original Logic: Distance < 5.0m?]
-    G -->|manual ON| I[Force Relay ON + Always Publish]
-    G -->|manual OFF| J[Force Relay OFF + Always Publish]
+    C --> J{Control Check Counter % 5 == 0?}
+    J -->|Yes| K[Check both MQTT + file for commands]
+    J -->|No| L[Skip control check]
     
-    H -->|Yes| K[Relay ON + Publish Data]
-    H -->|No| L[Relay OFF + Skip Publishing - continue]
+    K --> M{Control Command Found?}
+    M -->|manual on/off| N[Set MANUAL_MODE=true + Control Relay]
+    M -->|auto| O[Set MANUAL_MODE=false]
+    M -->|none| P[Continue with current mode]
     
-    K --> M[Local CSV Log]
-    I --> M
-    J --> M
-    L --> M
+    L --> Q{MANUAL_MODE?}
+    P --> Q
+    O --> Q
+    N --> Q
     
-    K --> N[MQTT Data Publish]
-    I --> N
-    J --> N
+    Q -->|false - AUTO| R[Original Logic: Distance < 5.0m?]
+    Q -->|true - MANUAL| S[Skip distance logic + Always publish]
     
-    N --> P[Cloud/Remote Broker]
+    R -->|Yes| T[Relay ON + Publish Data]
+    R -->|No| U[Relay OFF + Skip Publishing - continue]
+    
+    T --> V[Local CSV Log]
+    S --> V
+    U --> V
+    
+    T --> W[MQTT Data Publish with manual_mode: false]
+    S --> X[MQTT Data Publish with manual_mode: true]
+    
+    W --> Y[Cloud/Remote Broker]
+    X --> Y
 ```
 
 ## 🛠️ Development
@@ -468,8 +483,8 @@ Turn relay OFF:      ./relay_control_client.sh off
 Auto mode:           ./relay_control_client.sh auto
 
 === Control Modes ===
-AUTO:     Original behavior - relay ON when distance < 5.0m, publish only when ON
-MANUAL:   Override automatic control - ON/OFF commands via MQTT
+AUTO:     Original behavior preserved - relay ON when distance < 5.0m, publish only when ON
+MANUAL:   Override automatic control - always publish to show manual state
 ```
 
 ### Runtime Logs
@@ -511,7 +526,7 @@ MQTT_CONFIG="mqtt_service_02.sh" ./primary.sh
 ```
 
 ### Control Check Frequency
-By default, the system checks for remote commands every 5 sensor readings. To modify:
+By default, the system checks for remote commands every 5 sensor readings (typically every 10 seconds with 2-second intervals). To modify:
 
 ```bash
 # Edit the generated script
@@ -523,13 +538,23 @@ if [[ $((CONTROL_CHECK_COUNTER % 5)) -eq 0 ]]; then  # Change 5 to your desired 
 
 ## 💡 Design Philosophy
 
-This implementation prioritizes **simplicity and reliability** over complex features:
+This implementation prioritizes **elegance and compatibility** with the original working system:
 
-- **File-based control**: Simple, atomic file operations instead of complex IPC
-- **Periodic checking**: Non-blocking control checks every few cycles
-- **Preserved original logic**: AUTO mode maintains exact original behavior
-- **Minimal dependencies**: No additional processes or background services
-- **Easy troubleshooting**: Simple file-based state that's easy to inspect
+- **Preserves Original Structure**: Enhanced existing primary.sh without changing its core logic
+- **Minimal Integration**: Remote control added with just ~30 lines in the sensor loop
+- **Dual-Channel Control**: File-based + MQTT timeout approach for reliability
+- **Periodic Checking**: Non-blocking control check every 5 sensor readings (10 seconds)
+- **Original Logic Intact**: AUTO mode maintains exact original behavior with `continue` for above-threshold
+- **No Background Processes**: Simple, atomic operations without complex state management
+- **Easy Troubleshooting**: File-based control state that's easy to inspect and debug
+- **Production Ready**: Built on proven original working logic with minimal modifications
+
+### Key Benefits Over Complex Solutions
+- **Maintainable**: Easy to understand, debug, and modify
+- **Reliable**: Based on proven original working code
+- **Lightweight**: No additional processes or complex IPC mechanisms  
+- **Compatible**: Existing installations can be easily upgraded
+- **Elegant**: Sophisticated functionality through simple, well-designed additions
 
 ## 🤝 Contributing
 
