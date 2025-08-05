@@ -159,7 +159,8 @@ while true; do
     "distance": $ULTRASONIC_DISTANCE,
     "unit": "meters",
     "timestamp": "$TIMESTAMP",
-    "sensor_id": "$MQTT_CLIENT_ID",
+    "devEUI": "$MQTT_CLIENT_ID",
+    "deviceType": "ultrasonic",
     "raw_value": $RAW_VALUE
 }
 JSON_EOF
